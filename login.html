@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+/* Center the form on the page */
+body {
+    background: #f0f4f7;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    margin: 0;
+}
+
+/* Form container styling */
+.form-container {
+    background: #ffffff;
+    padding: 40px 30px;
+    border-radius: 12px;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+    width: 350px;
+    text-align: center;
+}
+
+/* Form heading */
+.form-container h2 {
+    margin-bottom: 25px;
+    color: #333333;
+}
+
+/* Input fields */
+.form-container input[type="email"],
+.form-container input[type="password"] {
+    width: 100%;
+    padding: 12px 15px;
+    margin: 10px 0;
+    border-radius: 8px;
+    border: 1px solid #ccc;
+    font-size: 14px;
+    transition: 0.3s;
+}
+
+.form-container input[type="email"]:focus,
+.form-container input[type="password"]:focus {
+    border-color: #007bff;
+    outline: none;
+}
+
+/* Submit button */
+.form-container button {
+    width: 100%;
+    padding: 12px;
+    background: #007bff;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 16px;
+    cursor: pointer;
+    transition: 0.3s;
+    margin-top: 10px;
+}
+
+.form-container button:hover {
+    background: #0056b3;
+}
+
+/* Link under the form */
+.form-container p {
+    margin-top: 15px;
+    font-size: 14px;
+    color: #555;
+}
+
+.form-container p a {
+    color: #007bff;
+    text-decoration: none;
+    transition: 0.3s;
+}
+
+.form-container p a:hover {
+    text-decoration: underline;
+}
+</style>
+
+<div class="form-container">
+  <h2>Login</h2>
+  <form method="POST">
+    <input type="email" name="email" placeholder="Email" required>
+    <input type="password" name="password" placeholder="Password" required>
+    <button type="submit">Login</button>
+  </form>
+  <p>Don't have an account? <a href="{{ url_for('register') }}">Register</a></p>
+</div>
+{% endblock %}

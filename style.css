@@ -1,0 +1,130 @@
+/* ---------------- BODY ---------------- */
+body {
+    margin: 0;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    display: flex;
+    height: 100vh;
+    background: #f5f6fa;
+}
+
+/* ---------------- SIDEBAR ---------------- */
+.sidebar {
+    width: 220px;
+    background: #1e1e2d;
+    color: #fff;
+    display: flex;
+    flex-direction: column;
+    padding-top: 20px;
+}
+
+.sidebar h2 {
+    text-align: center;
+    margin-bottom: 20px;
+    font-size: 18px;
+}
+
+.sidebar a,
+.sidebar form button {
+    color: #fff;
+    padding: 12px 20px;
+    text-align: left;
+    border: none;
+    background: none;
+    width: 100%;
+    cursor: pointer;
+    text-decoration: none;
+    transition: 0.3s;
+    font-size: 14px;
+}
+
+.sidebar a:hover,
+.sidebar form button:hover {
+    background: #3b3b52;
+}
+
+.sidebar input[type="file"] {
+    margin: 10px 20px;
+    color: #fff;
+}
+
+/* ---------------- MAIN CONTENT ---------------- */
+.main-content {
+    flex-grow: 1;
+    padding: 20px;
+    overflow-y: auto;
+}
+
+.card {
+    background: #fff;
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 20px;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+/* ---------------- VIDEO CONTAINER ---------------- */
+.video-container {
+    position: relative;
+    display: inline-block;
+}
+
+#drawCanvas {
+    border: 1px solid red;
+    position: absolute;
+    top: 0;
+    left: 0;
+}
+
+/* ---------------- MODALS ---------------- */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    background-color: rgba(0,0,0,0.5);
+}
+
+.modal-content {
+    background-color: #fefefe;
+    margin: 10% auto;
+    padding: 20px;
+    border-radius: 12px;
+    width: 50%;
+    position: relative;
+}
+
+.close {
+    color: #aaa;
+    float: right;
+    font-size: 24px;
+    cursor: pointer;
+}
+
+/* ---------------- ALERT BOX ---------------- */
+#alertBox {
+    font-weight: bold;
+    font-size: 16px;
+}
+
+/* ---------------- CHARTS ---------------- */
+canvas {
+    max-width: 100%;
+    border-radius: 8px;
+}
+
+/* ---------------- BUTTONS ---------------- */
+button {
+    padding: 8px 15px;
+    border-radius: 8px;
+    border: none;
+    cursor: pointer;
+    transition: 0.3s;
+}
+
+button:hover {
+    opacity: 0.9;
+}

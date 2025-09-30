@@ -1,0 +1,451 @@
+{% extends "base.html" %}
+{% block content %}
+<head>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+<script src="https://cdn.socket.io/4.3.2/socket.io.min.js"></script>
+<style>
+body {margin:0;font-family:Arial,sans-serif;background:#0b1a36;color:#fff;}
+.sidebar {width:220px;background:#2c3e50;display:flex;flex-direction:column;padding-top:20px;height:100vh;position:fixed;}
+.sidebar a, .sidebar button, .sidebar form button {padding:12px 20px;margin:5px 15px;border:none;border-radius:8px;color:#ecf0f1;text-decoration:none;cursor:pointer;font-size:15px;background:#34495e;text-align:left;}
+.sidebar a:hover, .sidebar button:hover, .sidebar form button:hover {background:#1abc9c;}
+.main-content {margin-left:240px;padding:20px;}
+.card {background:#162447;border:none;border-radius:10px;color:#fff;margin-bottom:15px;}
+#video-box {border:2px solid #1f4068;border-radius:10px;overflow:hidden;margin-top:15px;position:relative;}
+#videoFeed {display:block;width:100%;height:auto;}
+#zoneCanvas {position:absolute;top:0;left:0;pointer-events:none;}
+.alert-box {background:#d62828;color:#fff;font-weight:bold;border-radius:5px;padding:8px;margin-top:5px;display:none;}
+.zone-list {margin-top:10px;color:#fff;}
+canvas {background:transparent;}
+@media(max-width:768px){.main-content{margin-left:0;padding:10px}.sidebar{width:100%;height:auto;position:relative;flex-direction:row;flex-wrap:wrap}}
+</style>
+</head>
+
+<body>
+<div class="sidebar">
+    <button id="useCameraBtn">📷 Use Webcam</button>
+    <form id="uploadForm" enctype="multipart/form-data">
+        <input type="file" name="video" id="videoInput" accept="video/*" required style="margin:8px 15px;">
+        <button type="submit">📂 Upload Video</button>
+    </form>
+    <button id="drawRectangleZoneBtn">📦 Draw Rectangle Zone</button>
+    <button id="previewZoneBtn">👁 Preview Zones</button>
+    <button id="deleteZoneBtn">🗑 Delete Zone</button>
+    <a href="{{ url_for('logout') }}" style="margin-top:auto;margin-left:15px;margin-bottom:20px;">🚪 Logout</a>
+</div>
+
+<div class="main-content">
+    <h2 class="text-center mb-3">📊 Real-Time Analytics Dashboard</h2>
+    <div class="row">
+        <div class="col-md-8">
+            <div class="card p-3">
+                <h5>Real-time Population Trends</h5>
+                <canvas id="lineChart" height="200"></canvas>
+            </div>
+            <div id="video-box">
+                <img id="videoFeed" src="" />
+                <canvas id="zoneCanvas"></canvas>
+            </div>
+            <div class="zone-list" id="zoneList"></div>
+        </div>
+        <div class="col-md-4">
+            <div class="card p-3">
+                <h5>Zone Occupancy & Thresholds</h5>
+                <div id="zone-cards"></div>
+            </div>
+            <div class="card p-3">
+                <h5>Activity Heatmap</h5>
+                <div id="heatmap" style="height:250px;"></div>
+                <div id="alert-box" class="alert-box"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // --- Initial Setup & State Management ---
+    const socket = io();
+    let lineChart;
+    let isDrawing = false;
+    let currentZonePoints = [];
+    let savedZones = {};
+    let isDrawingRectangle = false;
+    let startPoint = null;
+    let activeZoneName = null; // Track the name of the zone currently being drawn
+    
+    const videoFeed = document.getElementById('videoFeed');
+    const zoneCanvas = document.getElementById('zoneCanvas');
+    const ctx = zoneCanvas.getContext('2d');
+    
+    // Set initial video source to a blank image and fetch zones on load
+    window.onload = () => {
+        videoFeed.src = ""; // Set initial source to blank
+        // We still fetch zones on load to ensure the 'savedZones' data is available, 
+        // but redrawAllZones will clear the canvas if no drawing is active.
+        fetchZones();
+    };
+
+    // --- Chart and Heatmap Functions ---
+    const initChart = () => {
+        const ctx = document.getElementById("lineChart").getContext("2d");
+        lineChart = new Chart(ctx, {
+            type: "line",
+            data: { labels: [], datasets: [] },
+            options: { responsive: true, animation: false, plugins: { legend: { labels: { color: "#fff" }}}, scales: { x: { ticks: { color: "#fff" } }, y: { ticks: { color: "#fff" }}}}
+        });
+    };
+    initChart();
+
+    function updateLineChart(counts, timestamp) {
+        const label = new Date(timestamp * 1000).toLocaleTimeString();
+        lineChart.data.labels.push(label);
+        if (lineChart.data.labels.length > 20) lineChart.data.labels.shift();
+        
+        lineChart.data.datasets.forEach(ds => {
+            ds.data.push(counts[ds.label] || 0);
+            if (ds.data.length > 20) ds.data.shift();
+        });
+        lineChart.update();
+    }
+
+    function updateHeatmap(points) {
+        let trace = { x: points.map(p => p[0]), y: points.map(p => p[1]), mode: 'markers', marker: { size: 15, opacity: 0.6 }};
+        Plotly.newPlot('heatmap', [trace], { paper_bgcolor: '#162447', plot_bgcolor: '#162447', margin: { t: 0, r:0, l:0, b:0 }});
+    }
+
+    // --- Zone Management Functions ---
+    function updateZoneCards(counts) {
+        fetch("/preview_zones")
+            .then(r => r.json())
+            .then(zones => {
+                let html = "";
+                const zoneNames = zones.map(z => z.name);
+                zones.forEach(z => {
+                    const name = z.name, thr = z.threshold ?? 15, current = counts[name] || 0;
+                    html += `
+                        <div class="d-flex justify-content-between border-bottom py-2">
+                            <span>${name} (Thr:${thr})</span>
+                            <div class="d-flex align-items-center">
+                                <span>${current}</span>
+                                <input type="number" data-zone-name="${name}" value="${thr}" class="form-control form-control-sm mx-2" style="width:60px;"/>
+                                <button class="btn btn-sm btn-primary set-threshold-btn" data-zone-name="${name}">Set</button>
+                            </div>
+                        </div>`;
+                    if (!lineChart.data.datasets.some(ds => ds.label === name)) {
+                        const color = `hsl(${Math.random() * 360}, 70%, 60%)`;
+                        lineChart.data.datasets.push({ label: name, data: [], borderColor: color, fill: false });
+                    }
+                });
+                document.getElementById("zone-cards").innerHTML = html;
+                document.querySelectorAll('.set-threshold-btn').forEach(button => {
+                    button.addEventListener('click', (e) => {
+                        const zoneName = e.target.dataset.zoneName;
+                        const input = document.querySelector(`input[data-zone-name="${zoneName}"]`);
+                        updateThreshold(zoneName, input.value);
+                    });
+                });
+                lineChart.data.datasets = lineChart.data.datasets.filter(ds => zoneNames.includes(ds.label));
+            });
+    }
+
+    function updateThreshold(zoneName, newThreshold) {
+        fetch("/update_threshold", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: zoneName, threshold: parseInt(newThreshold) })
+        })
+        .then(r => r.json())
+        .then(r => console.log(`Threshold updated for ${r.zone}: ${r.new_threshold}`));
+    }
+
+    function showAlert(msg) {
+        let a = document.getElementById("alert-box");
+        a.innerText = msg;
+        a.style.display = "block";
+        setTimeout(() => a.style.display = "none", 5000);
+    }
+
+    function fetchZones() {
+        fetch('/preview_zones')
+            .then(response => response.json())
+            .then(data => {
+                // Store the saved zones (required for heatmap/analytics even if not displayed)
+                savedZones = data; 
+                // ONLY redraw if the 'Preview Zones' button forces a display, 
+                // or if we are actively drawing (handled inside the button listener).
+                // For now, let's keep the redraw here, but the button listener controls when fetchZones is called.
+                redrawAllZones(); 
+            });
+    }
+
+    // --- Video Source Functions ---
+    function setSource(src) {
+        fetch("/set_source", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ source: src })
+        })
+        .then(r => r.json())
+        .then(r => {
+            videoFeed.src = "/video_feed";
+            videoFeed.onload = () => {
+                updateCanvasSize();
+                redrawAllZones();
+            };
+        });
+    }
+
+    // --- Drawing Utility Functions ---
+    function updateCanvasSize() {
+        zoneCanvas.width = videoFeed.offsetWidth;
+        zoneCanvas.height = videoFeed.offsetHeight;
+    }
+    
+    function redrawAllZones() {
+        ctx.clearRect(0, 0, zoneCanvas.width, zoneCanvas.height);
+        
+        // Redraw all saved zones
+        Object.values(savedZones).forEach(zone => {
+            drawZone(zone.points, zone.name, '#FFFF00', 'rgba(255, 255, 0, 0.3)');
+        });
+    }
+
+    function drawZone(points, name, strokeStyle = '#FFFF00', fillStyle = 'rgba(255, 255, 0, 0.3)') {
+        if (!points || points.length < 2) return;
+        ctx.beginPath();
+        const rect = videoFeed.getBoundingClientRect();
+        // Calculate scaling factor from video resolution to displayed size
+        const scaleX = videoFeed.naturalWidth / rect.width;
+        const scaleY = videoFeed.naturalHeight / rect.height;
+        
+        // Convert video-resolution points back to canvas/screen coordinates for drawing
+        ctx.moveTo(points[0][0] / scaleX, points[0][1] / scaleY);
+        for (let i = 1; i < points.length; i++) {
+            ctx.lineTo(points[i][0] / scaleX, points[i][1] / scaleY);
+        }
+        if (points.length > 2) {
+            ctx.closePath();
+            ctx.fillStyle = fillStyle;
+            ctx.fill();
+        }
+        ctx.strokeStyle = strokeStyle;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        if (name) {
+            // Calculate center point for label
+            const minX = Math.min(...points.map(p => p[0]));
+            const maxX = Math.max(...points.map(p => p[0]));
+            const minY = Math.min(...points.map(p => p[1]));
+            const maxY = Math.max(...points.map(p => p[1]));
+            const centerX = (minX + maxX) / 2;
+            const centerY = (minY + maxY) / 2;
+            
+            ctx.fillStyle = strokeStyle;
+            ctx.font = '20px Arial';
+            ctx.textAlign = 'center';
+            // Convert center point to canvas coordinates for label
+            ctx.fillText(name, centerX / scaleX, centerY / scaleY);
+        }
+    }
+
+    function saveZone(zoneName, points) {
+        fetch('/save_zone', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                name: zoneName,
+                points: points,
+                threshold: 1 // Default threshold
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                // 💡 CHANGE HERE: Removed the automatic fetchZones() call.
+                alert(`Zone '${zoneName}' saved. Click 'Preview Zones' to view.`);
+            } else {
+                alert('Error saving zone: ' + data.status);
+            }
+        });
+    }
+
+    function resetDrawingState() {
+        isDrawing = false;
+        isDrawingRectangle = false;
+        currentZonePoints = [];
+        startPoint = null;
+        activeZoneName = null; // Reset the active zone name
+        zoneCanvas.style.pointerEvents = 'none'; // Disable canvas interaction
+        // Note: We don't call redrawAllZones here to clear the display, 
+        // as the 'Preview Zones' button is now the control.
+    }
+
+    // -----------------------------------------------------------
+    // --- REFINED CANVAS EVENT HANDLERS FOR RECTANGLE DRAWING ---
+    // -----------------------------------------------------------
+    function onCanvasMouseDown(e) {
+        if (!isDrawingRectangle || !activeZoneName) return;
+        
+        const rect = zoneCanvas.getBoundingClientRect();
+        const scaleX = videoFeed.naturalWidth / rect.width;
+        const scaleY = videoFeed.naturalHeight / rect.height;
+        
+        // Store the start point SCALED TO THE ACTUAL VIDEO RESOLUTION
+        startPoint = { 
+            x: (e.clientX - rect.left) * scaleX, 
+            y: (e.clientY - rect.top) * scaleY 
+        };
+
+        zoneCanvas.addEventListener('mousemove', onCanvasMouseMove);
+        zoneCanvas.addEventListener('mouseup', onCanvasMouseUp);
+    }
+
+    function onCanvasMouseMove(e) {
+        if (!isDrawingRectangle || !startPoint) return;
+        
+        // Clear canvas but DO NOT redraw saved zones, only the current drawing rectangle.
+        ctx.clearRect(0, 0, zoneCanvas.width, zoneCanvas.height); 
+
+        const rect = zoneCanvas.getBoundingClientRect();
+        const currentX_px = e.clientX - rect.left;
+        const currentY_px = e.clientY - rect.top;
+
+        // Convert the start point (video resolution) back to CANVAS/CSS pixel coordinates for drawing
+        const startX_px = startPoint.x / (videoFeed.naturalWidth / rect.width);
+        const startY_px = startPoint.y / (videoFeed.naturalHeight / rect.height);
+
+        const width_px = currentX_px - startX_px;
+        const height_px = currentY_px - startY_px;
+        
+        ctx.beginPath();
+        // Draw using CSS/Canvas coordinates
+        ctx.rect(startX_px, startY_px, width_px, height_px);
+        ctx.strokeStyle = '#FF0000';
+        ctx.fillStyle = 'rgba(255, 0, 0, 0.3)';
+        ctx.lineWidth = 2;
+        ctx.fill();
+        ctx.stroke();
+    }
+
+    function onCanvasMouseUp(e) {
+        if (!isDrawingRectangle || !startPoint) return;
+        
+        zoneCanvas.removeEventListener('mousemove', onCanvasMouseMove);
+        zoneCanvas.removeEventListener('mouseup', onCanvasMouseUp);
+
+        const rect = zoneCanvas.getBoundingClientRect();
+        const scaleX = videoFeed.naturalWidth / rect.width;
+        const scaleY = videoFeed.naturalHeight / rect.height;
+
+        // Get the end point SCALED TO THE ACTUAL VIDEO RESOLUTION
+        const endPoint = { 
+            x: (e.clientX - rect.left) * scaleX, 
+            y: (e.clientY - rect.top) * scaleY 
+        };
+
+        const topleft = [Math.min(startPoint.x, endPoint.x), Math.min(startPoint.y, endPoint.y)];
+        const bottomright = [Math.max(startPoint.x, endPoint.x), Math.max(startPoint.y, endPoint.y)];
+        
+        // Define the 4 points of the rectangle in resolution-based coordinates for saving
+        const points = [
+            topleft,
+            [bottomright[0], topleft[1]],
+            bottomright,
+            [topleft[0], bottomright[1]]
+        ];
+
+        // Zone is Drawn and Saved (but NOT displayed)
+        saveZone(activeZoneName, points);
+        resetDrawingState();
+        
+        // Clear the canvas after saving the zone, ensuring it doesn't display until preview is clicked.
+        ctx.clearRect(0, 0, zoneCanvas.width, zoneCanvas.height); 
+    }
+
+
+    // -----------------------------------------------------------
+    // --- Button Event Listeners ---
+    // -----------------------------------------------------------
+    document.addEventListener('DOMContentLoaded', () => {
+        // Attach the canvas mouse down handler once
+        zoneCanvas.addEventListener('mousedown', onCanvasMouseDown);
+
+        document.getElementById("useCameraBtn").addEventListener("click", () => {
+            setSource("camera");
+            // Clear zones when changing source
+            ctx.clearRect(0, 0, zoneCanvas.width, zoneCanvas.height);
+            resetDrawingState();
+        });
+
+        document.getElementById("uploadForm").addEventListener("submit", (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            fetch("/upload_video", { method: "POST", body: formData })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === "saved") {
+                        setSource(data.filename);
+                    }
+                });
+        });
+
+        document.getElementById("drawRectangleZoneBtn").addEventListener('click', () => {
+            const zoneName = prompt("Enter a name for the new rectangle zone:");
+            if (zoneName) {
+                // Setup for drawing
+                activeZoneName = zoneName;
+                isDrawingRectangle = true;
+                zoneCanvas.style.pointerEvents = 'auto'; // Enable mouse interaction on canvas
+                alert(`Start drawing zone: ${zoneName}. Click and drag on the video feed. Zones will NOT appear until you click 'Preview Zones'.`);
+            }
+        });
+
+        document.getElementById("previewZoneBtn").addEventListener('click', () => {
+            // 🎯 ACTION: This is the ONLY trigger for displaying zones.
+            resetDrawingState(); 
+            fetchZones(); // Fetches and calls redrawAllZones() (makes them visible)
+            alert("Displaying saved zones."); 
+        });
+
+        document.getElementById("deleteZoneBtn").addEventListener('click', () => {
+            const zoneToDelete = prompt("Enter the name of the zone to delete:");
+            if (zoneToDelete) {
+                fetch('/delete_zone', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: zoneToDelete })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'deleted') {
+                        alert(`Zone '${zoneToDelete}' deleted.`);
+                        // Fetch zones to update the stored list and clear canvas
+                        fetchZones(); 
+                    } else {
+                        alert('Error deleting zone: ' + data.status);
+                    }
+                });
+            }
+        });
+    });
+
+    // --- Socket.IO Listener ---
+    socket.on("update", data => {
+        updateZoneCards(data.counts);
+        updateLineChart(data.counts, data.timestamp);
+        updateHeatmap(data.heatmap);
+        // Note: For real-time analytics to work, the backend must be using the zones, 
+        // even if the user hasn't pressed 'Preview Zones' to view them visually.
+        fetch('/preview_zones')
+            .then(r => r.json())
+            .then(zs => {
+                zs.forEach(z => {
+                    if ((data.counts[z.name] || 0) >= z.threshold) {
+                        showAlert(`${z.name} crossed threshold`);
+                    }
+                });
+            });
+    });
+</script>
+{% endblock %}
